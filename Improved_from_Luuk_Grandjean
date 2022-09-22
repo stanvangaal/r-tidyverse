@@ -1,0 +1,172 @@
+---
+title: "Assigment - kNN DIY"
+author:
+- "Luuk Grandjean - Author"
+- "Stan van Gaal- Reviewer"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+  html_notebook:
+    toc: yes
+    toc_depth: 2
+---
+
+
+```{r}
+library(tidyverse)
+library(googlesheets4)
+library(class)
+library(caret)
+```
+
+---
+
+Choose a suitable dataset from [this](https://github.com/HAN-M3DM-Data-Mining/assignments/tree/master/datasets) folder and train  your own kNN model. Follow all the steps from the CRISP-DM model.
+
+
+## Business Understanding
+Based on the dataset I will predict the room occupancy. 
+
+## Data Understanding
+```{r}
+# Load dataset KNN-occupancu and get a first look
+#KNN_occupancy <- read_xsl("datasets/KNN-occupancy.csv") Hier zit de fout read_xcl moet worden read_csv.
+KNN_occupancy <- read_csv("datasets/KNN-occupancy.csv") 
+glimpse(KNN_occupancy)
+```
+Dataset consists out of 7 columns. Each column meaning:</br>
+Date: Date and time of loging the data</br>
+Temperature: Temperature in Celius</br>
+Humidity: Air humidity in %</br>
+Light: In Lux</br>
+CO2: Co2 in air in parts per million
+HumidityRatio: Derived quantity from temperature and relative humidity in kgwater-vapor/kg-air</br>
+Occupancy: Occupancy 0 or 1. 0 stands for not occupied. 1 stands for occupied</br>
+
+
+## Data Preparation
+Read the data
+
+````{r}
+# First we get rid of the first column date as we don 't need that for this prediction. Also de RAW file will be moved to CleanKNN, that will be used throughout the rest of the file
+
+#CleanKNN <- KNN_occupancy[-3] # Hier zit de fout,aangepast moet -1 zijn want alleen de eerste kolom moet weggehaald worden niet de eerste drie kolommen. 
+CleanKNN <- KNN_occupancy[-1]
+print(CleanKNN)
+# In the next step the datatype of 'Occupancy', wich is Interger, will be changed to a String.
+CleanKNN <- CleanKNN %>%
+#mutate(Occupancy = factor(ifelse(Occupancy == 10, "Empty", "Occupied"))) # hier zit fout, 10 ipv 0. In deze variabelen wordt er gekeken naar een boolean het kan dus alleen maar goed of fout zijn (0, 1). 10 bestaat niet in deze Type. 
+mutate(Occupancy = factor(ifelse(Occupancy == 0, "Empty", "Occupied"))) 
+
+head(CleanKNN)
+# As you can see in head the data type of 'Occupancy' is fctr. This is needed for the model so we leave it that way
+
+
+# The variable in column occupancy is the one we need to predict. This is called the 'label'. So first we look at the count and the proportion of this label in de data set
+
+cntDiag <- table(CleanKNN$Occupancy) #Count number of values of the label
+propDiag <- round(prop.table(cntDiag) * 100, digits = 1) #Proportion
+
+# Display results
+cntDiag 
+propDiag
+
+# First we look at ranges from each characteristic, so we can determine if it has impact on the model 
+summary(CleanKNN[c("Temperature","Humidity", "Light", "HumidityRatio", "Occupancy")])
+
+# based on the results we can say that 'Light' & 'HumidityRatio' differ a lot from 'Temperature'& 'humidity'. So we need to normalize the values to rescale all features to a standard range of values
+
+    # normalize <- function(x) {
+    #   return((x - min(x)) / (max(x) - min(x)))
+    # }
+    # 
+    # # Now we can use the function on all non-label     features
+    # nCols <- dim(CleanKNN)[2] #Determine number of columns
+    # nCols
+    # CleanKNN_n <- sapply(2:nCols,
+    #                      function(x){
+    #                        normalize(CleanKNN[,x])
+    #                      }) %>% as.data.frame()
+    # summary(CleanKNN_n)
+
+# Cross validation: We will split the dataset into a training set wich contains 70% of the data & a testing set consisting of the rest
+RNGkind(sample.kind = "Rounding")
+
+#Random number generator
+#set.seeds(123) hier zit een fout, de functie seeds bestaat niet. Dit moet seed zijn.
+set.seed(123)
+
+# Returns number of rows in dataset
+##row_data <- ncol(CleanKNN) Moet functie nrow zijn, je wilt het aantal rows niet columns.
+row_data <- nrow(CleanKNN)
+
+# Pick random sample from dataset. In this case we make a 30%/70% split. 
+index <- sample(row_data, row_data*0.7)
+
+#Train data set consisting of 70% of the data
+KNN_train <- CleanKNN[index, ] 
+#Test data set consisting of 30% of the data
+KNN_test <- CleanKNN[-index, ]
+
+# Prop.table() is used to check for imbalance in the set
+prop.table(table(KNN_train$Occupancy))
+
+#The proportion appears to be imbalance which will affect the model. The model will have a tendency to predict the majority class.
+
+set.seed(123)
+# The upsample fucntion will increase the size of the minority class, without losing data. In this case the classes will have the same size
+KNN_train_up <- upSample(x = KNN_train %>%
+                         select(-Occupancy),
+                         y = KNN_train$Occupancy,
+                         list = F,
+                         yname = "Occupancy"
+                 )
+# check upsample result
+table(KNN_train_up$Occupancy)
+````
+## Modeling
+
+```{r}
+#To use KNN the set needs scaling first, because KNN calcultes the distance between the data therefor the range between the data must be the same.The scaling process is carried out using the z-score method and the scaling process only changes the scale of the data without changing the distribution of the initial data.
+
+#Scaling train data
+train_x <- KNN_train_up %>%
+  select(-Occupancy) %>%
+  scale()
+  #scaling() hier zit een fout, de functie scaling bestaat niet. Dit moet scale zijn.
+
+#Save variable
+train_y <- KNN_train_up$Occupancy
+
+#Scaling test data
+test_x <- KNN_test %>%
+  select(-Occupancy) %>%
+  scale( center = attr(train_x, "scaled:center"),
+         scale = attr(train_x, "scaled:scale")
+         )
+  
+#Save variable
+test_y <- KNN_test$Occupancy
+
+
+#The actual modeling with knn3
+pred_knn <- knn3Train(train = train_x,
+                      test = test_x,
+                      cl = train_y,
+                      k = sqrt(nrow(train_x)) %>%
+                      round()) %>%
+  as.factor()
+
+confusionMatrix(pred_knn, test_y, negative = "Occupied") # Hier zit een fout - Positive ipv negative
+
+library(gmodels)
+CrossTable(pred_knn, test_y)
+```
+
+
+## Evaluation and Deployment
+text and code here
+
